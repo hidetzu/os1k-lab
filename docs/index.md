@@ -10,3 +10,4 @@
 | 02 RISC-V入門 | [riscv-intro.md](riscv-intro.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/02-assembly) |
 | 03 OSの全体像 | [overview.md](overview.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/03-overview) |
 | 04 ブート | [boot.md](boot.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/04-boot) |
+| 05 Hello World! | [hello-world.md](hello-world.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/05-hello-world) |
