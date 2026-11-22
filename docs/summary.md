@@ -3,7 +3,7 @@
 2026-11-21〜22 に、『1000行でOSを作ってみよう』（[OS in 1,000 Lines](https://operating-system-in-1000-lines.vercel.app/ja/)）を全 17 章通した。各章のノートは [index.md](index.md) から辿れる。
 
 - 環境：ホストは Arch Linux、clang / lld / LLVM 23.1.5、QEMU 11.1.3（同梱の OpenSBI v1.8.1）、32 ビット RISC-V の virt マシン（`setup-arch.md`）。
-- 実験を再現できるコミット：教材の 16 章まで実装し、すべての観察を記録した時点は [`2e09668`](https://github.com/hidetzu/my-os/tree/2e09668)。この後、コードの配置の整理（`src/` への移動）と実験コードの片付けをした。各章の実装のコミットは「章ごとの到達点」の表。
+- 実験を再現できるコミット：教材の 16 章まで実装し、すべての観察を記録した時点は [`2e09668`](https://github.com/hidetzu/os1k-lab/tree/2e09668)。この後、コードの配置の整理（`src/` への移動）と実験コードの片付けをした。各章の実装のコミットは「章ごとの到達点」の表。
 
 ## 最初の問いへの答え
 
