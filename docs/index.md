@@ -4,6 +4,8 @@
 
 最初の問い：カーネルを誰がメモリに配置し、CPU はどうやって自分が書いた最初の命令に到達するのか。
 
+全 17 章を通したまとめ：[summary.md](summary.md)
+
 | 章 | ノート | 教材 |
 | --- | --- | --- |
 | 01 開発環境のセットアップ | [setup-arch.md](setup-arch.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/01-setting-up-development-environment) |
@@ -22,3 +24,4 @@
 | 14 システムコール | [system-call.md](system-call.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/14-system-call) |
 | 15 ディスク読み書き | [virtio-blk.md](virtio-blk.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/15-virtio-blk) |
 | 16 ファイルシステム | [file-system.md](file-system.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/16-file-system) |
+| 17 おわりに | [summary.md](summary.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/17-outro) |
