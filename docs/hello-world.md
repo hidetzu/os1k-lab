@@ -81,7 +81,7 @@ OpenSBI のトラップハンドラ（M-mode）       ← トラップでモー�
 ecall の次の命令（S-mode）に戻る           ← mret でモードが下がる
 ```
 
-S-mode の `ecall` が S-mode のトラップハンドラではなく M-mode の OpenSBI に届く理由は、`medeleg` の設定にある（「次に試すこと」の宿題）。
+S-mode の `ecall` が S-mode のトラップハンドラではなく M-mode の OpenSBI に届く理由は、`medeleg` の設定にある。S-mode からの `ecall` は `scause` が 9 で、`medeleg 0x00f4b509` のビット 9 が 0（委譲しない）なので M-mode に届く（2026-11-22 に解いた。`system-call.md` の「medeleg：ecall はどのモードに届くか」）。
 
 OpenSBI が UART にどう書いているかは、まだ確かめていない（推論：起動時にデバイスツリーから UART を見つけ、`0x1000_0000` の 16550 互換 UART のレジスタに書いている）。
 
@@ -345,7 +345,7 @@ x86 の欄は一般知識。『はじめて読む486』で `hlt` がどこに載
 - [x] `wfi` のループと空の `for (;;) {}` で、ホストの `top` に出る `qemu-system-riscv32` の CPU 使用率を比べる → 空ループは 100%、`wfi` はほとんど出てこない（「空ループとの違い」に記録）
 - [ ] QEMU が `wfi` をどう処理しているかをソースで確かめる（hart を止めてホストのスレッドを眠らせているか）
 - [ ] `common.h` の `va_*` の定義をやめて `#include <stdarg.h>` にしても、`-nostdlib` のままビルドできるか試す
-- [ ] 「S-mode の `ecall` は M-mode へ行く」ことが、`medeleg 00f4b509` のどこに表れているか確かめる（`riscv-intro.md` の宿題）
+- [x] 「S-mode の `ecall` は M-mode へ行く」ことが、`medeleg 00f4b509` のどこに表れているか確かめる（`riscv-intro.md` の宿題）→ ビット 9（S-mode からの `ecall`）が 0（`system-call.md`）
 
 ## 読んだ範囲・動かした範囲・疑問
 

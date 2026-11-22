@@ -246,7 +246,51 @@ void handle_trap(struct trap_frame *f) {
 
 ## medeleg：例外はどのモードに届くか
 
-<!-- riscv-intro.md / hello-world.md の宿題。MEDELEG 0x00f4b509 のビットと scause の対応。予想 → 観察 -->
+2026-11-22、14 章（システムコール）のときに解いた。`medeleg` の値の読み方と `ecall` の話は `system-call.md` の「medeleg：ecall はどのモードに届くか」。ここでは、不正な命令（`scause=2`）について書く。
+
+### medeleg のビット 2
+
+```
+MEDELEG = 0x00f4b509
+0x509 = 0101 0000 1001
+                    ^
+                  bit 2 = 0
+```
+
+ビット 2（不正な命令）は 0 で、委譲されていない。不正な命令は、まず M-mode の OpenSBI に届く。それなのに、08 章の `unimp` はカーネルの `handle_trap`（S-mode）が受け取った。
+
+### 不正な命令は OpenSBI を経由していた（OpenSBI v1.8.1 のソース）
+
+1. [`lib/sbi/sbi_trap.c` L328-L329](https://github.com/riscv-software-src/opensbi/v1.8.1/lib/sbi/sbi_trap.c#L328-L329)：`CAUSE_ILLEGAL_INSTRUCTION` -> `sbi_illegal_insn_handler`。
+2. [`lib/sbi/sbi_illegal_insn.c`](https://github.com/riscv-software-src/opensbi/v1.8.1/lib/sbi/sbi_illegal_insn.c)：エミュレートできる命令（一部の CSR の読み出しなど）でなければ、`truly_illegal_insn` を呼ぶ。
+
+```c
+int truly_illegal_insn(ulong insn, struct sbi_trap_regs *regs)
+{
+    ...
+    trap.cause = CAUSE_ILLEGAL_INSTRUCTION;
+    trap.tval = insn;
+    ...
+    return sbi_trap_redirect(regs, &trap);
+}
+```
+
+3. [`lib/sbi/sbi_trap.c` L103〜](https://github.com/riscv-software-src/opensbi/v1.8.1/lib/sbi/sbi_trap.c#L103) の `sbi_trap_redirect`：S-mode に例外が起きたように見せかける。`stval` <- 命令の中身、`sepc` <- 例外を起こした番地、`scause` <- 2、戻り先（`mepc`）<- `stvec`（カーネルの `kernel_entry`）、`SPP` <- 例外前のモード。そのあと `mret` で S-mode の `kernel_entry` に入る。
+
+```
+unimp (S-mode)
+  -> medeleg bit 2 = 0 -> OpenSBI (M-mode)
+       sbi_illegal_insn_handler: cannot emulate
+       truly_illegal_insn -> sbi_trap_redirect
+         scause = 2, stval = instruction, sepc = address of unimp
+         mret to stvec (kernel_entry)
+  -> kernel: handle_trap receives it in the same form as a delegated trap
+```
+
+- カーネルから見ると、委譲されたときとまったく同じ形で届く。08 章では、M-mode を経由したことに気づけなかった。
+- `stval` に書いたのは OpenSBI（`trap.tval = insn`）。QEMU は M-mode の `mtval` に命令の中身を入れ（`cpu_helper.c` の L2364 の側）、OpenSBI がそれを使う。
+- 16 ビット版の `unimp`（`0000`）では、`sbi_illegal_insn_handler` が `(insn & 3) != 3` を見て、`mepc` の番地から命令を読み直す。それでも `0000` なので、`truly_illegal_insn(0)` となり `stval = 0`。観察した値と合う。
+- 32 ビット版の `unimp`（`c0001073`）は SYSTEM 命令の形なので、`system_opcode_insn` が CSR 命令としてエミュレートを試みる。推論：書き込めない CSR（`cycle`）への書き込みなので、エミュレートできずに `truly_illegal_insn` に回り、`stval = c0001073`。
 
 ## x86 との比較
 
@@ -293,6 +337,8 @@ $ llvm-addr2line -e kernel.elf 8020010a
 - `0x8020_0106` の `csrw stvec, a0` が `WRITE_CSR(stvec, ...)` の正体。
 
 ### stval=00000000 の出どころ（QEMU v11.1.3 のソース）
+
+訂正（2026-11-22、14 章で OpenSBI のソースを読んで分かった）：この節では「S-mode で処理するなら `env->stval = tval`」の道筋をたどったが、実際には `medeleg` のビット 2 が 0 なので、不正な命令は M-mode の OpenSBI に届いていた。QEMU が入れたのは `mtval` で、`stval` に書いたのは OpenSBI。正しい流れは「medeleg：例外はどのモードに届くか」の「不正な命令は OpenSBI を経由していた」。以下は、最初に読んだときの記録として残す。
 
 2026-11-22、QEMU v11.1.3 の `target/riscv/tcg/` を読んで、不正な命令の例外で `stval` に何が入るかをたどった（ソースを読んだだけで、実験では未確認）。
 
@@ -347,7 +393,7 @@ PANIC: kernel.c:35: unexpected trap scause=00000002, stval=c0001073, sepc=802001
 
 読み取り：
 
-- `stval` に、命令の中身 `c0001073` がそのまま入った。QEMU のソースで読んだ流れ（命令の中身 → `bins` → `tval` → `stval`）が、実験でも確かめられた。
+- `stval` に、命令の中身 `c0001073` がそのまま入った。「`stval` には命令の中身が入る」ことが、実験でも確かめられた。ただし、入れたのは QEMU ではなく OpenSBI だった（訂正。「medeleg：例外はどのモードに届くか」）。
 - 16 ビット版の `stval=00000000` は「何も入れなかったので 0」ではなく、「命令の中身が 0 だったので 0」だった。
 - `scause=2`（不正な命令）は同じ。`sepc=8020010a` は 32 ビット版 `unimp` の番地で、今回も例外を起こした命令そのものを指している。
 - llvm-objdump は `c0001073` も `unimp` と表示する。
@@ -362,7 +408,8 @@ PANIC: kernel.c:35: unexpected trap scause=00000002, stval=c0001073, sepc=802001
 - [ ] 特権仕様の `stval`（と `mtval`）の節で、不正な命令のときに何を入れることになっているか（必ず入れるのか、実装しだいなのか）を確かめる
 - [ ] 教材の `stval=ffffff84` の理由を、QEMU 8.0.2 のソースで調べる
 - [ ] QEMU モニターの `info registers` で、例外のあとの `stvec`、`sepc`、`scause`、`stval` を見る
-- [ ] `medeleg 0x00f4b509` のビット2（`scause=2`）を確かめ、`unimp` の例外が最初にどのモードに届くか予想する。そのうえで、M-mode を経由したかどうかを確かめる方法を考える
+- [x] `medeleg 0x00f4b509` のビット2（`scause=2`）を確かめ、`unimp` の例外が最初にどのモードに届くか予想する。そのうえで、M-mode を経由したかどうかを確かめる方法を考える → ビット 2 は 0。M-mode の OpenSBI に届き、OpenSBI が S-mode に転送していた（OpenSBI のソースで確認。「medeleg：例外はどのモードに届くか」）
+- [ ] QEMU のログ（`-d int`）で、`unimp` のときに M-mode の例外が起きていることを実際に見る
 
 ## 読んだ範囲・動かした範囲・疑問
 

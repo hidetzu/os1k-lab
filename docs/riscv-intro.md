@@ -259,3 +259,5 @@ x86 側の記述は、下の「『はじめて読む486』の対応箇所」で�
     - 手がかり（2026-11-22、RISC-V 特権仕様の Sv32 の節で確認）：Sv32 の物理アドレスは 34 ビット（`PPN[1]` 12 ビット + `PPN[0]` 10 ビット + `page offset` 12 ビット）で、16GiB まで指せる。推論：`0x3_0000_0000`（12GiB）は、ページテーブルを通せば 32 ビットの CPU からも届く。実際に対応を付けて触れる実験はまだ（`page-table.md`）。
   - OpenSBI の起動ログに出る `Boot HART MIDELEG : 0x00001666` と `Boot HART MEDELEG : 0x00f4b509` は、M-mode と S-mode の境界とどうつながるのか。
     - 2026-11-21、自分の環境（OpenSBI v1.8.1）の `./run.sh` でも同じ値が出た。同じバナーに `Platform Features : medeleg` という行もある。
+    - MEDELEG について解決（2026-11-22）：`medeleg` のビット n が 1 なら、原因の番号 n の例外を S-mode に委譲する。`0x00f4b509` は OpenSBI の `delegate_traps` が設定した値で、U-mode からの `ecall`（ビット 8）やページフォールト（ビット 12、13、15）は S-mode のカーネルへ、S-mode からの `ecall`（ビット 9）や不正な命令（ビット 2）は M-mode の OpenSBI へ届く（`system-call.md`、`exception.md`）。
+    - MIDELEG（割り込みの委譲）は、まだ調べていない。
