@@ -427,47 +427,6 @@ void yield(void) {
   switch_context(&prev->sp, &next->sp);
 }
 
-void delay(void) {
-  for (int i = 0; i < 30000000; i++)
-    __asm__ __volatile__("nop"); // 何もしない命令
-}
-
-struct process *proc_a;
-struct process *proc_b;
-
-void proc_a_entry(void) {
-  printf("starting process A\n");
-  uint32_t sp;
-
-  // 実験：sp を壊して例外を起こす（process.md の「sp を壊して unimp
-  // する実験」）
-  // __asm__ __volatile__(
-  //     "li sp, 0xdeadbeef\n"  // sp をありえない番地にする
-  //     "unimp\n"              // 例外を起こす
-  // );
-
-  while (1) {
-    __asm__ __volatile__("mv %0, sp" : "=r"(sp));
-    printf("A sp=%x\n", sp);
-    //        putchar('A');
-    yield();
-    delay();
-  }
-}
-
-void proc_b_entry(void) {
-  printf("starting process B\n");
-  uint32_t sp;
-
-  while (1) {
-    __asm__ __volatile__("mv %0, sp" : "=r"(sp));
-    printf("B sp=%x\n", sp);
-    //        putchar('B');
-    yield();
-    delay();
-  }
-}
-
 long getchar(void) {
   struct sbiret ret = sbi_call(0, 0, 0, 0, 0, 0, 0, 2);
   return ret.error;
@@ -506,7 +465,7 @@ void handle_syscall(struct trap_frame *f) {
     PANIC("unreachable");
     break;
   case SYS_READFILE:
-  case SYS_WRITEFILE:
+  case SYS_WRITEFILE: {
     const char *filename = (const char *)f->a0;
     char *buf = (char *)f->a1;
     int len = f->a2;
@@ -530,6 +489,7 @@ void handle_syscall(struct trap_frame *f) {
 
     f->a0 = len;
     break;
+  }
   default:
     PANIC("unexpected syscall a3=%x\n", f->a3);
   }
@@ -643,20 +603,10 @@ void kernel_main(void) {
   virtio_blk_init();
   fs_init();
 
-  // ディスクの読み込みテスト
-  //  char buf[SECTOR_SIZE];
-  //  read_write_disk(buf, 0, false);
-  //  printf("first sector: %s\n", buf);
-  //
-  //  strcpy(buf, "hello from kernel!!!\n");
-  //  read_write_disk(buf, 0, true);
-
   idle_proc = create_process(NULL, 0);
   idle_proc->pid = 0; // idle
   current_proc = idle_proc;
 
-  //  proc_a = create_process((uint32_t)proc_a_entry);
-  //  proc_b = create_process((uint32_t)proc_b_entry);
   create_process(_binary_shell_bin_start, (size_t)_binary_shell_bin_size);
 
   yield();
