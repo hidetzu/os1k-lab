@@ -7,3 +7,8 @@
 *.bin
 *.log
 *.pcap
+
+# 作業用・ローカル専用のファイル
+lorem.txt
+tmp.md
+compile_flags.txt
