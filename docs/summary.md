@@ -111,6 +111,10 @@
 - [ ] OpenSBI の代わりに、M-mode で起動する小さなファームウェアを自分で書き、`-bios` に渡す（ブートローダーへの興味の本丸。`boot.md` の「次に掘るところ」）
 - [ ] 割り込みとタイマーを実装し、プリエンプティブなマルチタスクにする
 - [ ] xv6（RISC-V 版）や HinaOS を読み、この OS と比べる（教材の 17 章の勧め）
+  - [ ] xv6-riscv（[mit-pdos/xv6-riscv](https://github.com/mit-pdos/xv6-riscv)）の `kernel/start.c` から読む。xv6 は OpenSBI を使わず（`Makefile` の `-bios none`）、`kernel.ld` で `0x8000_0000` に置いた `_entry` から M-mode で始まり、`start.c` が `mstatus` の MPP を S にし、`mepc` に `main` を入れ、`medeleg` を `0xffff` にして `mret` する。OpenSBI の代わりを自分で書くときのお手本になる（2026-11-22、GitHub のファイルで確認）
+  - [ ] この OS で作ったものと、xv6 の対応するファイルを比べる：`kalloc.c`（返却できる割り当て）、`vm.c`（64 ビットの Sv39）、`trampoline.S` / `kernelvec.S` / `trap.c`（例外の入口）、`swtch.S` / `proc.c`（タイマー割り込みでの切り替え）、`virtio_disk.c`（同じ virtio-blk、割り込みで完了を知る）、`fs.c` / `log.c` / `bio.c`（ディレクトリ、ログ、バッファキャッシュ）、`plic.c` / `uart.c`（外部の機器の割り込み）、`spinlock.c`（マルチプロセッサのロック）
+  - [ ] xv6 は 64 ビット（RV64）で、ツールチェーンに GCC 系（`riscv64-unknown-elf-gcc` など）を探す。Arch で必要なパッケージを確かめる（推論：`riscv64-elf-gcc` など。未確認）
+  - [ ] TCP/IP を読むなら HinaOS（[nuta/microkernel-book](https://github.com/nuta/microkernel-book)）の `servers/tcpip/`（`arp.c` などがあることを確認）。xv6-riscv の本体にはネットワークのコードはない（ファイル一覧で確認）。『マスタリングTCP/IP』と照らし合わせて読む
 - [ ] `qemu.log` で、`unimp` のときに M-mode の例外が起きていることを見る（`exception.md`）
 - [ ] `satp` が B の表に変わるのを見る、`info mem` で A / D の付き方が入れ替わるのを見る（`page-table.md`）
 - [ ] 仕様の `sret` と `sstatus`、`scause` の表を読む（`user-mode.md`）
