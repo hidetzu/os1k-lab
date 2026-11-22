@@ -4,6 +4,7 @@
 extern char __bss[], __bss_end[], __stack_top[];
 extern char __free_ram[], __free_ram_end[];
 extern char __kernel_base[];
+extern char _binary_shell_bin_start[], _binary_shell_bin_size[];
 
 struct process procs[PROCS_MAX];
 struct process *current_proc; // 現在実行中のプロセス
@@ -30,6 +31,10 @@ struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,
 
 void putchar(char ch) {
   sbi_call(ch, 0, 0, 0, 0, 0, 0, 1 /* Console Putchar */);
+}
+
+void user_entry(void) {
+  PANIC("not yet implemented"); // 後で実装する
 }
 
 __attribute__((naked)) void switch_context(uint32_t *prev_sp,
@@ -106,7 +111,7 @@ void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags) {
   table0[vpn0] = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V;
 }
 
-struct process *create_process(uint32_t pc) {
+struct process *create_process(const void *image, size_t image_size) {
   // 空いているプロセス管理構造体を探す
   struct process *proc = NULL;
   int i;
@@ -122,19 +127,19 @@ struct process *create_process(uint32_t pc) {
 
   // switch_context() で復帰できるように、スタックに呼び出し先保存レジスタを積む
   uint32_t *sp = (uint32_t *)&proc->stack[sizeof(proc->stack)];
-  *--sp = 0;            // s11
-  *--sp = 0;            // s10
-  *--sp = 0;            // s9
-  *--sp = 0;            // s8
-  *--sp = 0;            // s7
-  *--sp = 0;            // s6
-  *--sp = 0;            // s5
-  *--sp = 0;            // s4
-  *--sp = 0;            // s3
-  *--sp = 0;            // s2
-  *--sp = 0;            // s1
-  *--sp = 0;            // s0
-  *--sp = (uint32_t)pc; // ra
+  *--sp = 0;                    // s11
+  *--sp = 0;                    // s10
+  *--sp = 0;                    // s9
+  *--sp = 0;                    // s8
+  *--sp = 0;                    // s7
+  *--sp = 0;                    // s6
+  *--sp = 0;                    // s5
+  *--sp = 0;                    // s4
+  *--sp = 0;                    // s3
+  *--sp = 0;                    // s2
+  *--sp = 0;                    // s1
+  *--sp = 0;                    // s0
+  *--sp = (uint32_t)user_entry; // ra
 
   uint32_t *page_table = (uint32_t *)alloc_pages(1);
 
@@ -142,6 +147,23 @@ struct process *create_process(uint32_t pc) {
   for (paddr_t paddr = (paddr_t)__kernel_base; paddr < (paddr_t)__free_ram_end;
        paddr += PAGE_SIZE)
     map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
+
+  // ユーザーのページをマッピングする
+  for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
+    paddr_t page = alloc_pages(1);
+
+    // コピーするデータがページサイズより小さい場合を考慮
+    // https://github.com/nuta/operating-system-in-1000-lines/pull/27
+    size_t remaining = image_size - off;
+    size_t copy_size = PAGE_SIZE <= remaining ? PAGE_SIZE : remaining;
+
+    // 確保したページにデータをコピー
+    memcpy((void *)page, image + off, copy_size);
+
+    // ページテーブルにマッピング
+    map_page(page_table, USER_BASE + off, page,
+             PAGE_U | PAGE_R | PAGE_W | PAGE_X);
+  }
 
   // 各フィールドを初期化
   proc->pid = i + 1;
@@ -319,12 +341,13 @@ void kernel_main(void) {
 
   WRITE_CSR(stvec, (uint32_t)kernel_entry);
 
-  idle_proc = create_process((uint32_t)NULL);
+  idle_proc = create_process(NULL, 0);
   idle_proc->pid = 0; // idle
   current_proc = idle_proc;
 
-  proc_a = create_process((uint32_t)proc_a_entry);
-  proc_b = create_process((uint32_t)proc_b_entry);
+  //  proc_a = create_process((uint32_t)proc_a_entry);
+  //  proc_b = create_process((uint32_t)proc_b_entry);
+  create_process(_binary_shell_bin_start, (size_t)_binary_shell_bin_size);
 
   yield();
 

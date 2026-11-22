@@ -56,6 +56,8 @@ struct trap_frame {
     }                                                                          \
   } while (0)
 
+#define USER_BASE 0x1000000 // ユーザ空間が利用するアドレスの先頭
+
 #define PROCS_MAX 8 // 最大プロセス数
 
 #define PROC_UNUSED 0   // 未使用のプロセス管理構造体
