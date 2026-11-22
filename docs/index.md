@@ -16,3 +16,4 @@
 | 08 例外処理 | [exception.md](exception.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/08-exception) |
 | 09 メモリ割り当て | [memory-allocation.md](memory-allocation.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/09-memory-allocation) |
 | 10 プロセス | [process.md](process.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/10-process) |
+| 11 ページテーブル | [page-table.md](page-table.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/11-page-table) |
