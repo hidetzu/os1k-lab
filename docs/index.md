@@ -14,3 +14,4 @@
 | 06 C標準ライブラリ | [libc.md](libc.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/06-libc) |
 | 07 カーネルパニック | [kernel-panic.md](kernel-panic.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/07-kernel-panic) |
 | 08 例外処理 | [exception.md](exception.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/08-exception) |
+| 09 メモリ割り当て | [memory-allocation.md](memory-allocation.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/09-memory-allocation) |
