@@ -118,7 +118,10 @@ void kernel_main(void) {
 //    PANIC("booted!");
 //    printf("unreachable here!\n");
     WRITE_CSR(stvec, (uint32_t) kernel_entry);
+    // 16ビット版
     __asm__ __volatile__("unimp"); // 無効な命令
+    // 32ビット版
+//    __asm__ __volatile__(".option push\n.option norvc\nunimp\n.option pop");
 
 //    printf("\n\nHello %s\n", "World!");
 //    printf("1 + 2 = %d, %x\n", 1 + 2, 0x1234abcd);
