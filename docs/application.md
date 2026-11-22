@@ -274,6 +274,38 @@ $ llvm-nm shell.bin.o
 
 - `_binary_shell_bin_size` は `0x10250` = 66128 で、`ls -l` の大きさと一致した。
 - 記号が `A`（絶対値）なので、番地ではなく値そのものが大きさ。
+- 教材の例は `00010260`。自分の環境は `00010250`。`shell.c` などの中身が少し違うので、大きさも少し変わる。
+
+### このシンボルを使えるのは誰か
+
+疑問：`_binary_shell_bin_start` などを読む例があるが、これはユーザー空間のアプリから使えるということか。
+
+答え：使えるのはカーネルのほう。アプリではない。
+
+- `shell.bin.o` は、`run.sh` でカーネルと一緒にリンクしている（`kernel.c common.c shell.bin.o`）。シンボルは `kernel.elf` の中にでき、アプリ（`shell.elf`）には入っていない。
+- 教材で `printf` を使ってこれらを表示している例は、カーネル側のコード（`kernel_main` など）。アプリの `main`（`shell.c`）ではない。
+
+```
+kernel.elf
++------------------------------------------+
+| kernel.c: extern char _binary_shell_bin_start[];   <- usable from kernel code
+|                                          |
+| .data:                                   |
+|   _binary_shell_bin_start  0x8020_09fc   |
+|   +------------------------------+       |
+|   | contents of shell.bin (app)  |       |  <- the app itself does not know these names
+|   +------------------------------+       |
+|   _binary_shell_bin_end    0x8021_0c4c   |
++------------------------------------------+
+```
+
+| シンボル | カーネルから見た意味 |
+| --- | --- |
+| `_binary_shell_bin_start` | 埋め込んだアプリの中身の先頭の番地 |
+| `_binary_shell_bin_end` | その終わりの番地 |
+| `_binary_shell_bin_size` | 大きさ（番地ではなく値。記号が `A`） |
+
+推論：13 章で、カーネルがこれらを使ってアプリの中身を見つけ、`alloc_pages` で確保したページへ写し、`0x0100_0000` から見えるように表に載せる。
 
 ### カーネルの中のどこに入ったか
 
