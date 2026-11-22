@@ -21,3 +21,4 @@
 | 13 ユーザーモード | [user-mode.md](user-mode.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/13-user-mode) |
 | 14 システムコール | [system-call.md](system-call.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/14-system-call) |
 | 15 ディスク読み書き | [virtio-blk.md](virtio-blk.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/15-virtio-blk) |
+| 16 ファイルシステム | [file-system.md](file-system.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/16-file-system) |
