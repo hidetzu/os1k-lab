@@ -19,3 +19,4 @@
 | 11 ページテーブル | [page-table.md](page-table.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/11-page-table) |
 | 12 アプリケーション | [application.md](application.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/12-application) |
 | 13 ユーザーモード | [user-mode.md](user-mode.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/13-user-mode) |
+| 14 システムコール | [system-call.md](system-call.md) | [リンク](https://operating-system-in-1000-lines.vercel.app/ja/14-system-call) |
