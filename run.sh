@@ -18,12 +18,16 @@ $OBJCOPY -Ibinary -Oelf32-littleriscv shell.bin shell.bin.o
 $CC $CFLAGS -Wl,-Tkernel.ld -Wl,-Map=kernel.map -o kernel.elf \
     kernel.c common.c shell.bin.o
 
+# --format=ustar: ustar形式のtarファイルを作成する
+(cd disk && tar cf ../disk.tar --format=ustar *.txt)
+
 # QEMUを起動
 # -bios default: デフォルトのBIOS (ここではOpenSBI) を使用する。
 # -nographic: QEMUをウィンドウなしで起動する。
 # -serial mon:stdio: QEMUの標準入出力を仮想マシンのシリアルポートに接続する。mon:を指定することで、QEMUモニターへの切り替えも可能になる。
 # --no-reboot: 仮想マシンがクラッシュしたら、再起動せずに停止させる (デバッグに便利)。
 $QEMU -machine virt -bios default -nographic -serial mon:stdio --no-reboot \
-    -drive id=drive0,file=lorem.txt,format=raw,if=none \
+    -d unimp,guest_errors,int,cpu_reset -D qemu.log \
+    -drive id=drive0,file=disk.tar,format=raw,if=none \
     -device virtio-blk-device,drive=drive0,bus=virtio-mmio-bus.0 \
     -kernel kernel.elf
