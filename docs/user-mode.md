@@ -8,7 +8,30 @@
 
 ## 誰が誰に制御を渡すか
 
-<!-- MROM → OpenSBI（mret）→ boot → kernel_main → yield → user_entry（sret）→ start → main の図。boot.md の図を、アプリまで延ばす。矢印ごとに命令・CSR を添える -->
+04 章の「誰が誰に制御を渡すか」（`boot.md`）を、カーネルの先のアプリまで延ばした。
+
+```
+ MROM (0x1000)                                                         M-mode
+   |  jr t0
+   v
+ OpenSBI (0x8000_0000)                                                 M-mode
+   |  mret   (mepc = 0x8020_0000, mstatus.MPP = S)
+   v
+ boot (0x8020_0000) -> kernel_main                                     S-mode
+   |  create_process(shell)  ra = user_entry
+   |  yield -> switch_context
+   |  ret    (ra = user_entry)
+   v
+ user_entry                                                            S-mode
+   |  sret   (sepc = USER_BASE = 0x0100_0000, sstatus.SPP = 0 = U)
+   v
+ start (0x0100_0000) -> jal main                                       U-mode
+   v
+ main (0x0100_000e)                                                    U-mode
+```
+
+- カーネルにとっての MROM と OpenSBI の役割を、アプリにとってはカーネルが担っている。
+- 下のモードへ移るのは、どちらも「戻り先の CSR とモードの欄を書いてから、例外から戻る命令を実行する」形（`mret` / `sret`）。
 
 ## 実行ファイルの展開
 
@@ -64,11 +87,60 @@ struct process *create_process(const void *image, size_t image_size) {
 
 ## ユーザーモードへの移行
 
-<!-- user_entry。sepc、sstatus（SPIE / SPP）、sret。OpenSBI の mret との比較表 -->
+```c
+#define SSTATUS_SPIE (1 << 5)
+
+__attribute__((naked)) void user_entry(void) {
+  __asm__ __volatile__("csrw sepc, %[sepc]\n"
+                       "csrw sstatus, %[sstatus]\n"
+                       "sret\n"
+                       :
+                       : [sepc] "r"(USER_BASE), [sstatus] "r"(SSTATUS_SPIE));
+}
+```
+
+- `sepc` に `USER_BASE` を書く。`sret` の飛び先になる。
+- `sstatus` に `SSTATUS_SPIE`（ビット 5）だけを書く。SPP（ビット 8）は 0 になる。
+- `sret` で、`sepc` の番地へ、SPP が示すモード（0 = U）で飛ぶ。
+- コードに「U-mode にする」と明示する行はない。SPP を 0 にしたまま `sret` することで U-mode になる（一般知識。仕様の `sstatus` と `sret` の説明で確かめる）。
+- 教材によると、SPIE を立てるのは U-mode で割り込みを許可するため。この OS は割り込みを使わないので、なくても動く。
+
+### OpenSBI の mret との比較
+
+| | OpenSBI -> カーネル（`boot.md`） | カーネル -> アプリ（`user_entry`） |
+| --- | --- | --- |
+| 命令 | `mret` | `sret` |
+| 飛び先を入れる CSR | `mepc` | `sepc`（`USER_BASE` を書く） |
+| 飛んだ先のモードを決めるもの | `mstatus` の MPP | `sstatus` の SPP |
+| 飛んだ先のモード | S-mode | U-mode |
+
+### sret が sstatus をどう書き換えるか
+
+一般知識（仕様の `sret` の説明で確かめる）。観察した `sstatus` の値（「観察結果」）と合う。
+
+| `sret` の動き | 今回 |
+| --- | --- |
+| `SIE` <- `SPIE`（例外前の割り込み許可を戻す） | `SPIE` が 1 なので `SIE` = 1 |
+| `SPIE` <- 1 | 1 |
+| モード <- `SPP`、そのあと `SPP` <- 0（U） | `SPP` が 0 なので U-mode へ |
+| `pc` <- `sepc` | `0x0100_0000` |
 
 ## 動作テスト
 
-<!-- カーネルの番地に書き込んでページフォールト。PAGE_U の意味 -->
+`shell.c` の `main` で、カーネルの番地 `0x8020_0000` に書き込んでみた。
+
+```c
+void main(int argc, char *argv[]) {
+  *((volatile int *)0x80200000) = 0x1234;
+  for (;;)
+    ;
+}
+```
+
+- `0x8020_0000` は、シェルの表にも載っている。カーネルは、どのプロセスの表にも恒等マッピングで載せているから（`page-table.md`）。
+- ただし、カーネルのページの印に `U` はない。`info mem` でも、カーネルの行は `rwx--a-` で `u` がなかった（「観察結果」）。
+- U-mode から `U` のないページに触れると、表に載っていても、権限が足りずにページフォールトになる。仕様の変換手順の「`pte.u` で今のモードからのアクセスが許されるか確かめ、だめならページフォールト」に当たる（`page-table.md` の「仕様の変換手順」の先の手順）。
+- これで、`PAGE_U` によって、アプリからカーネルのメモリを守れている。結果は「観察結果」の「カーネルの番地に書き込む」。
 
 ## 観察結果
 
@@ -193,6 +265,87 @@ $ llvm-objdump -d shell.elf
 2. ページ数が 17 で、`shell.bin` の大きさと合う。
 3. `xp` の中身が `shell.elf` の命令と一致する。
 
+### user_entry を実装したあと（./run.sh と info registers）
+
+`./run.sh` では、OpenSBI の起動メッセージのあと何も出ずに止まって見えた。シェルの `main` は無限ループするだけで、まだ何も出力しないので、予想どおり。`not yet implemented` の `PANIC` も消えた。
+
+止まって見える状態で、QEMU モニターの `info registers` を見た（抜粋）。
+
+```
+CPU#0
+ priv     U
+ V        0
+ pc       0100000e
+ x1/ra    0100000c   x2/sp 01010250
+ sstatus  00000022
+ sepc     01000000
+ scause   00000000
+ satp     80080253
+```
+
+| レジスタ | 値 | 読み方 |
+| --- | --- | --- |
+| `priv` | `U` | U-mode で実行中。`boot.md` で見たときは `S` だった |
+| `pc` | `0100000e` | `main`（自分自身へのジャンプの無限ループ）。仮想アドレスのまま表示されている |
+| `x2/sp` | `01010250` | `start` が設定した `__stack_top`（`user.ld`） |
+| `x1/ra` | `0100000c` | `start` の `jal main`（`0x0100_000a` の 2 バイトの命令）の次の番地。`main` から戻る先 |
+| `sepc` | `01000000` | `user_entry` が書いた `USER_BASE`。`sret` はここへ飛んだ |
+| `satp` | `80080253` | PPN `0x80253` -> 表は `0x8025_3000`。推論：idle の 18 ページ（`__free_ram` = `0x8024_1000` から）のすぐ後ろで、シェルの 1 段目の表 |
+| `sstatus` | `00000022` | `SPIE`（ビット 5）と `SIE`（ビット 1） |
+
+`sstatus` が `0x20` ではなく `0x22` なのはなぜか：
+
+```
+0x22 = 0010 0010
+         ^     ^
+       bit 5   bit 1
+       SPIE    SIE
+```
+
+- `user_entry` が書いたのは `SSTATUS_SPIE`（`0x20`）だけ。ビット 1（`SIE`）を立てたのは `sret`。`sret` は戻るときに `SIE` <- `SPIE` とするので、`SPIE` の 1 が `SIE` に写り、`SPIE` も 1 のまま（「sret が sstatus をどう書き換えるか」）。
+
+### カーネルの番地に書き込む（動作テスト）
+
+```
+PANIC: kernel.c:256: unexpected trap scause=0000000f, stval=80200000, sepc=01000018
+```
+
+`PANIC` で止まったあとの `info registers` では `pc 80200626`。
+
+どの命令で止まったか：
+
+```
+$ llvm-objdump -d shell.elf
+0100000e <main>:
+ 100000e: 6505       lui  a0, 0x1
+ 1000010: 23450513   addi a0, a0, 0x234     <- a0 = 0x1234
+ 1000014: 802005b7   lui  a1, 0x80200       <- a1 = 0x8020_0000
+ 1000018: c188       sw   a0, 0x0(a1)       <- sepc: exception here
+ 100001a: a001       j    0x100001a
+
+$ llvm-addr2line -e shell.elf 01000018
+.../shell.c:4
+```
+
+| 値 | 読み方 |
+| --- | --- |
+| `scause=0000000f` | 15 = ストアのページフォールト（Store/AMO page fault） |
+| `stval=80200000` | 書き込もうとした番地。カーネルの先頭（`boot`） |
+| `sepc=01000018` | 例外を起こした `sw` 命令そのもの（`exception.md` で確かめたとおり、次の命令ではない）。`shell.c` の 4 行目 |
+| `kernel.c:256` | `handle_trap` の `PANIC`。推論：整形で `PANIC(...)` が 2 行に分かれたので、閉じかっこのある 2 行目の番号が出ている |
+| `pc 80200626` | `handle_trap`（`0x8020_0600`〜）の中。`PANIC` の `while (1) {}` で回っている |
+
+- 教材の出力例は `kernel.c:71`、`sepc=0100001a`。番号と番地は自分のコードで変わる。`scause` と `stval` は同じ。
+
+10 章の実験との違い：
+
+| | `scause` | 原因 |
+| --- | --- | --- |
+| 10 章：`sp` を壊し、`0x8800_0000` に書き込み（`process.md`） | 7（ストアのアクセスフォールト） | その番地には RAM も機器もない |
+| 13 章：`0x8020_0000` に書き込み | 15（ストアのページフォールト） | 番地はあるが、ページテーブルの権限（`U` がない）で拒否された |
+
+推論：同じ「書き込めない」でも、物理的に存在しないのか、ページテーブルで許されていないのかで、例外の種類が分かれる（仕様の `scause` の表で確かめる）。
+
 ### 補足：リトルエンディアン（37 05 01 01 -> 0x01010537）
 
 32 ビットの値は、4 つのバイトに分けてメモリに置かれる。
@@ -232,7 +385,11 @@ joined:      0x01010537
 ## 次に試すこと
 
 - [ ] `xp /2wx 0x80265000` で、`0x01010537` と `0x25050513` が値の形で出るか確かめる
-- [ ] `user_entry` を実装し、U-mode で `start` に入ることを確かめる（`info registers` の `pc` が `0x0100_000e` 付近の `main` のループになるか）
+- [x] `user_entry` を実装し、U-mode で `start` に入ることを確かめる → `priv U`、`pc 0100000e`（「user_entry を実装したあと」）
+- [ ] 仕様の `sret` と `sstatus` の説明で、SPP と SIE / SPIE の書き換えを確かめる
+- [x] 教材の動作テスト：`shell.c` からカーネルの番地 `0x8020_0000` に書き込み、ページフォールトになるか確かめる → `scause=0xf`、`stval=0x80200000`（「カーネルの番地に書き込む」）
+- [ ] 仕様の `scause` の表で、7（アクセスフォールト）と 15（ページフォールト）の違いを確かめる
+- [ ] カーネルの範囲に `PAGE_U` を付けたら、同じ書き込みが通ってしまうか試す（試したら元に戻す）
 
 ## 読んだ範囲・動かした範囲・疑問
 
