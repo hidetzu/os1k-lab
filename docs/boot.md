@@ -166,7 +166,7 @@ QEMU v11.1.3 のソースで確認したこと（未観察）：
 ### 疑問
 
 - [ ] なぜ `0x8020_0000` なのか。OpenSBI が使う範囲はどこまでで、余裕はどれくらいあるか（材料は「OpenSBI の起動バナー」に記録済み。OpenSBI の範囲の終わりと `0x8020_0000` の間を計算する）
-- [ ] `.text.boot` を先頭以外に置いたら本当に起動しなくなるか（`ENTRY` が使われていないことの実験）
+- [x] `.text.boot` を先頭以外に置いたら本当に起動しなくなるか（`ENTRY` が使われていないことの実験）→ 起動しなくなった。OpenSBI の `Domain0 Next Address` は一番低い番地のままだった（「.text.boot を先頭から外す実験」）
 
 ## 最小限のカーネル（kernel.c）
 
@@ -665,11 +665,99 @@ OpenSBI は `a2` を手がかりに構造体を読み、「次は `0x80200000` �
 ### まだ確かめていないこと
 
 - OpenSBI の中で、構造体を読んで `mret` するまでの処理（今回は `mepc` と `priv S` から外側の結果として確かめただけ）。
-- QEMU がジャンプ先に ELF のエントリポイントではなく一番低い番地を使う点（`.text.boot` を先頭以外に置く実験で区別できる）。
+- ~~QEMU がジャンプ先に ELF のエントリポイントではなく一番低い番地を使う点~~ → 2026-11-22 に実験で確かめた（「.text.boot を先頭から外す実験」）。
 
 ### 次に掘るところ
 
 実機では、1番（QEMU の起動準備）の役割を ROM やブートローダーが担う。ブートローダーに興味があるなら、次はここを掘る。
+
+## .text.boot を先頭から外す実験
+
+2026-11-22、ホストの Arch で実験した。この時点のコードは `src/` に移したあと（`Makefile` でビルド）。
+
+### 何を確かめたいか
+
+QEMU のソースでは、ジャンプ先に ELF のエントリポイントではなく、読み込んだイメージの一番低い番地を使うと読んだ（「最初の問いとの関係：QEMU はどこへジャンプさせるか」）。ふだんは `boot` がエントリポイントで、しかも一番低い番地（`0x8020_0000`）にあるので、どちらが使われているか区別できない。
+
+| どこから見た番地か | ふだんの値 |
+| --- | --- |
+| OpenSBI の `Domain0 Next Address` | `0x80200000` |
+| `kernel.elf` の `<boot>`（`llvm-nm -n`） | `0x80200000` |
+| ELF のエントリポイント（`llvm-readelf -h`） | `0x80200000` |
+| 一番低い LOAD セグメント（`llvm-readelf -l`） | `0x80200000` |
+
+そこで、`boot` だけを先頭から外して、エントリポイントと一番低い番地をずらした。
+
+### kernel.ld の変え方
+
+`.text` の中の2行を入れ替えた。
+
+```
+before                              after
+.text :{                            .text :{
+    KEEP(*(.text.boot));                *(.text .text.*);
+    *(.text .text.*);                   KEEP(*(.text.boot));
+}                                   }
+```
+
+- `*(.text .text.*)` の `.text.*` は、`.text.boot` にも当てはまる。リンカは、入力のセクションを、スクリプトの上から見て最初に当てはまった行に置く（一般知識）。入れ替えると、`.text.boot` は `*(.text .text.*)` の側で、ファイルの中の順番どおりに置かれ、後ろの `KEEP(*(.text.boot))` には何も残らない。
+- `kernel.o` の中では `.text`（ほかの関数全部）が先、`.text.boot` が後ろに並んでいる（`llvm-readelf -S`）。そのため `boot` は `kernel.c` の関数の一番後ろに移った。
+- 1 回目は、入れ替える前の配置のまま動かしてしまった（`boot` が `0x8020_0000` のまま）。入れ替えて保存し、`make` し直してから、`llvm-nm -n` で `boot` が先頭から外れたことを確かめた。
+
+```
+$ llvm-nm -n kernel.elf
+80200000 T __kernel_base
+80200000 T alloc_pages        <- another function is now first
+80200050 T virtio_reg_read32
+...
+80201298 T boot               <- boot moved here
+$ llvm-readelf -h kernel.elf
+  Entry point address:  0x80201298
+```
+
+### 結果
+
+| | 値 |
+| --- | --- |
+| ELF のエントリポイント（`boot`） | `0x8020_1298` |
+| 一番低い番地（`alloc_pages`） | `0x8020_0000` |
+| OpenSBI の `Domain0 Next Address` | `0x8020_0000` |
+
+- `Domain0 Next Address` は、エントリポイントではなく一番低い番地になった（Claude がスクラッチパッドで同じ `kernel.elf` を動かして確かめた）。
+- `./run.sh` では、`PANIC: ` が大量に表示され、カーネルは起動しなかった。
+- `ENTRY(boot)` でエントリポイントを `boot` にしても、QEMU は一番低い番地を OpenSBI に渡し、CPU は `alloc_pages` の先頭から動き出した。`boot` を `.text` の先頭に置く `KEEP(*(.text.boot))` が、起動のために本当に必要な行。QEMU のソースで読んだこと（`image_low_addr` を使う）が、実験で確かめられた。
+
+### 起動しなかった理由（qemu.log）
+
+`Makefile` で `-d ... int -D qemu.log` を有効にしていたので、`qemu.log` に例外の記録が残っていた。カーネルの番地で最初に起きた例外の付近：
+
+```
+riscv_cpu_do_interrupt: hart:0, async:0, cause:00000007, epc:0xffffffff80200002, tval:0x80044e7c, desc=fault_store
+riscv_cpu_do_interrupt: hart:0, async:0, cause:00000007, epc:0xffffffff80200002, tval:0x80044e6c, desc=fault_store
+riscv_cpu_do_interrupt: hart:0, async:0, cause:00000007, epc:0xffffffff80200002, tval:0x80044e5c, desc=fault_store
+...（tval が 0x10 ずつ減りながら続く）
+```
+
+`0x8020_0000` から始まった `alloc_pages`：
+
+```
+80200000: addi sp, sp, -0x10     reserve 16 bytes on the stack
+80200002: sw   ra, 0xc(sp)       <- store access fault (scause 7)
+```
+
+1. `sp` が設定されていない：本来は `boot` が `sp` を `__stack_top` に設定するが、`boot` を通らなかったので、`sp` は OpenSBI が使っていた値（`0x8004_4e8x` 付近）のままだった。
+2. 書き込めない：そこは OpenSBI の領域（起動メッセージの `Region00 : 0x80040000-0x8004ffff ... S/U: ()`）なので、S-mode からは書けない。書き込みのアクセスフォールトになる。
+3. また先頭に戻る：`medeleg` のビット 7 は 0 なので、この例外はまず OpenSBI に届き、OpenSBI が S-mode の `stvec` へ転送する（`exception.md` の `sbi_trap_redirect`）。`stvec` は `0x8020_0000` のままだった。OpenSBI v1.8.1 の `sbi_hart_switch_mode` が、カーネルに渡すときに `csr_write(CSR_STVEC, next_addr)` で `stvec` を飛び先の番地に設定している（[`lib/sbi/sbi_hart.c` L817](https://github.com/riscv-software-src/opensbi/blob/v1.8.1/lib/sbi/sbi_hart.c#L817)）。カーネルは `kernel_main` に着く前なので、`stvec` を書き換えていない。
+4. `sp` が下がり続ける：転送されるたびに `alloc_pages` の先頭からやり直し、`addi sp, sp, -0x10` で `sp` が 16 バイトずつ下がる。`tval` が `0x10` ずつ減っているのはこのため。10 章で `sp` を壊したときと同じ形の「入れ子の例外で `sp` が下がり続ける」状態（`process.md`）。
+
+- `sp` が OpenSBI の領域を抜けて書き込める場所に着いたあと、`PANIC: ` だけが大量に出る仕組みは、まだ追えていない。推論：`alloc_pages` の中の「足りなくなったら `PANIC`」の道に入り、`printf` の途中で、また例外と転送を繰り返している。`qemu.log` は約 150MB あるので、追うならログの後半を見る。
+- 試し終わったら、`kernel.ld` の 2 行を元の順番に戻す。
+
+### 分かったこと
+
+- OpenSBI が飛ぶ先は、QEMU が渡した「一番低い番地」。`kernel.ld` の `ENTRY` ではない。
+- カーネルの最初の命令は、`kernel.ld` で必ずイメージの先頭に置く必要がある。`KEEP(*(.text.boot))` を `.text` の最初に書くのは、そのため。
+- OpenSBI は、カーネルに渡すときに `stvec` を飛び先の番地に設定している。カーネルが自分の `stvec` を設定するまでに例外が起きると、カーネルの先頭に戻ってくる。
 
 ## 次に試すこと
 

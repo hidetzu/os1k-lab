@@ -33,7 +33,7 @@
 根拠：
 
 - `llvm-objdump` で `boot` が `0x8020_0000` の先頭にあること、QEMU モニターの `xp /8i 0x1000`（MROM）、`xp /6wx 0x1028`（`fw_dynamic_info`）、`info registers` の `pc` と `priv S`（`boot.md`）。
-- QEMU v11.1.3 のソース：ジャンプ先は ELF のエントリポイントではなく、読み込んだイメージの一番低い番地（`hw/riscv/boot.c`、`hw/riscv/virt.c`。`boot.md`）。
+- QEMU v11.1.3 のソース：ジャンプ先は ELF のエントリポイントではなく、読み込んだイメージの一番低い番地（`hw/riscv/boot.c`、`hw/riscv/virt.c`。`boot.md`）。`boot` を `.text` の先頭から外す実験で、`Domain0 Next Address` が一番低い番地のままになり、カーネルが起動しなくなることも確かめた（`boot.md` の「.text.boot を先頭から外す実験」）。
 - OpenSBI の起動メッセージの `Domain0 Next Address : 0x80200000`、`Next Mode : S-mode`（`boot.md`）。
 - アプリ側：`info mem` で `0x0100_0000` -> `0x8026_5000`（`u` 付き）、`xp /8i` の中身が `shell.elf` の命令と一致、`info registers` の `priv U`（`user-mode.md`）。
 
@@ -101,7 +101,6 @@
 
 - `MIDELEG : 0x00001666`（割り込みの委譲）の意味（`riscv-intro.md`）。
 - なぜカーネルの番地が `0x8020_0000` なのか。OpenSBI の範囲（〜`0x8004_ffff`）との差の理由（`boot.md`）。
-- `.text.boot` を先頭以外に置くと、本当に起動しなくなるか（`ENTRY` が使われていないことの確認。`boot.md`）。
 - 協調的マルチタスクで、CPU を譲らないプロセスがいたらどうなるか。タイマー割り込みが要る理由（`overview.md`）。
 - プリエンプティブにしたとき、`switch_context` の 13 個の保存で足りるか（`process.md`）。
 - 486 の TSS の `esp0` は、`sscratch` のカーネルスタックと同じ役割か（`process.md`）。
