@@ -257,3 +257,4 @@ x86 側の記述は、下の「『はじめて読む486』の対応箇所」で�
 - 疑問：
   - `0x3_0000_0000` 以降という 32 ビットを超える番地に `gpex_mmio_window` がある。32 ビットの CPU からどう届くのか。ページングの章（Sv32 の物理アドレス幅）で確かめる。
   - OpenSBI の起動ログに出る `Boot HART MIDELEG : 0x00001666` と `Boot HART MEDELEG : 0x00f4b509` は、M-mode と S-mode の境界とどうつながるのか。
+    - 2026-11-21、自分の環境（OpenSBI v1.8.1）の `./run.sh` でも同じ値が出た。同じバナーに `Platform Features : medeleg` という行もある。

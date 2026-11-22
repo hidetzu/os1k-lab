@@ -165,7 +165,7 @@ QEMU v11.1.3 のソースで確認したこと（未観察）：
 
 ### 疑問
 
-- [ ] なぜ `0x8020_0000` なのか。OpenSBI が使う範囲はどこまでで、余裕はどれくらいあるか（起動バナーの `Firmware Base` / `Firmware Size` と `Domain0 Next Address` で確かめる）
+- [ ] なぜ `0x8020_0000` なのか。OpenSBI が使う範囲はどこまでで、余裕はどれくらいあるか（材料は「OpenSBI の起動バナー」に記録済み。OpenSBI の範囲の終わりと `0x8020_0000` の間を計算する）
 - [ ] `.text.boot` を先頭以外に置いたら本当に起動しなくなるか（`ENTRY` が使われていないことの実験）
 
 ## 最小限のカーネル（kernel.c）
@@ -564,6 +564,48 @@ QEMU のソース（[`riscv_compute_fdt_addr()`](https://github.com/qemu/qemu/bl
 
 推論（未検証）：`info registers` で見た `x20/s4 87e00000` は、OpenSBI がデバイスツリーの番地を `s4` に持っていた名残だと思われる。
 
+### OpenSBI の起動バナー（ホストの Arch で ./run.sh）
+
+2026-11-21、05 章の `printf` まで入れたカーネルで `./run.sh` を実行したときの起動メッセージ（抜粋）。
+
+```
+OpenSBI v1.8.1
+...
+Platform Console Device     : uart8250
+Firmware Base               : 0x80000000
+Firmware Size               : 317 KB
+Firmware RW Offset          : 0x40000
+Firmware RW Size            : 61 KB
+...
+Domain0 Region00            : 0x80040000-0x8004ffff M: (F,R,W) S/U: ()
+Domain0 Region01            : 0x80000000-0x8003ffff M: (F,R,X) S/U: ()
+Domain0 Region02            : 0x00100000-0x00100fff M: (I,R,W) S/U: (R,W)
+Domain0 Region03            : 0x10000000-0x10000fff M: (I,R,W) S/U: (R,W)
+Domain0 Region04            : 0x02000000-0x0200ffff M: (I,R,W) S/U: ()
+Domain0 Region05            : 0x0c400000-0x0c5fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region06            : 0x0c000000-0x0c3fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region07            : 0x00000000-0xffffffff M: () S/U: (R,W,X)
+Domain0 Next Address        : 0x80200000
+Domain0 Next Arg1           : 0x87e00000
+Domain0 Next Mode           : S-mode
+...
+Boot HART MIDELEG           : 0x00001666
+Boot HART MEDELEG           : 0x00f4b509
+```
+
+読み取り：
+
+| バナーの行 | 前に観察した値 | 一致 |
+| --- | --- | --- |
+| `Domain0 Next Address : 0x80200000` | `fw_dynamic_info` の `next_addr` = `0x8020_0000` | 一致 |
+| `Domain0 Next Mode : S-mode` | `fw_dynamic_info` の `next_mode` = `1`（S） | 一致 |
+| `Domain0 Next Arg1 : 0x87e00000` | MROM が `a1` に入れたデバイスツリーの番地 `0x87e0_0000` | 一致 |
+
+- QEMU 側（MROM と構造体）で見た値を、OpenSBI 側も同じように受け取っていることが、OpenSBI 自身の表示で確かめられた。
+- OpenSBI は `0x8000_0000` から置かれ、`Region00` と `Region01` を合わせた `0x8000_0000`〜`0x8004_ffff` を自分用にしている。どちらも `S/U: ()` で、S-mode と U-mode からは読み書きも実行もできない。
+- `Region03`（`0x1000_0000`〜、UART）は `S/U: (R,W)`。推論：S-mode のカーネルも UART を直接触ることは許されている。05 章では、あえて SBI 経由で出力していることになる。
+- `Region07` は全空間で `S/U: (R,W,X)`。推論：上の Region に当てはまらない番地は S/U に開放されている（Region が上から順に照合されるのかは未確認）。
+
 ## まとめ：0x80200000 のリレー
 
 観察では、`0x80200000` という同じ数字が4か所に現れた。この数字が受け渡される過程が、そのまま「誰が誰に制御を渡すか」になっている。
@@ -631,7 +673,7 @@ OpenSBI は `a2` を手がかりに構造体を読み、「次は `0x80200000` �
 
 ## 次に試すこと
 
-- [ ] `./run.sh` の起動バナーで、OpenSBI のバージョンと、`-bios default` で読み込まれたファームウェアを確かめる（`setup-arch.md` の宿題）
+- [x] `./run.sh` の起動バナーで、OpenSBI のバージョンを確かめる → `v1.8.1`（`setup-arch.md` に記録）
 - [ ] カーネルがないとき、OpenSBI は最後にどこへジャンプしようとしているか（バナーの `Domain0 Next Address` などの行を見る）
 - [x] カーネルを起動して無限ループで止まったところで、QEMU モニターの `info registers` で `pc` と `sp` を見る。`pc` が `kernel_main` の中、`sp` が `__stack_top` 付近になっているか（`llvm-nm kernel.elf` の番地と比べる）→ 観察結果を参照
 
