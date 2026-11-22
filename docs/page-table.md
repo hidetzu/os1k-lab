@@ -576,6 +576,124 @@ PTE の図のとおりに分ける：
 - `0x8024_4000` は、A の 1 段目の表（`0x8024_3000`）のすぐ次のページ。推論：A の `create_process` で 1 段目の表を作った直後、最初の `map_page`（`0x8020_0000`）が 2 段目の表を `alloc_pages(1)` で作った。
 - `map_page` で 1 段目の PTE に `PAGE_V` だけを付けたことが、印の `0x001` に表れている。
 
+### 2 段目の表の 512 番目（QEMU モニターの xp）
+
+`0x8020_0000` の `VPN[0]` も 512 なので、2 段目の表の 512 番目を読んだ。
+
+```
+(qemu) xp /x 0x80244000+512*4
+0000000080244800: 0x200800cf
+```
+
+```
+0x200800cf = 0010 0000 0000 1000 0000 0000 1100 1111
+
+ 31            20 19        10 9   8 7 6 5 4 3 2 1 0
++----------------+------------+-----+-+-+-+-+-+-+-+-+
+|    PPN[1]      |   PPN[0]   | RSW |D|A|G|U|X|W|R|V|
++----------------+------------+-----+-+-+-+-+-+-+-+-+
+ 0010 0000 0000   1000 0000 00  00   1 1 0 0 1 1 1 1
+```
+
+| 欄 | 値 | 読み方 |
+| --- | --- | --- |
+| PPN | `0x200800cf >> 10` = `0x80200` | `x 0x1000` = `0x8020_0000`。仮想アドレスと同じで、恒等マッピングどおり |
+| `V` `R` `W` `X` | 1 1 1 1 | `map_page` に渡した `PAGE_R \| PAGE_W \| PAGE_X` と `PAGE_V`。`R` と `X` が 1 なので、最後の段（データのページを指す PTE） |
+| `U` | 0 | U-mode からは触れない。カーネル用のページ |
+| `G` | 0 | 使っていない |
+| `A` | 1 | カーネルは書いていない |
+| `D` | 1 | カーネルは書いていない |
+
+予想と違ったビット：`A` と `D`
+
+- `map_page` が書いたのは `V` `R` `W` `X` だけなので、下位 8 ビットは `0x0f` のはずだった。実際は `0xcf` で、`A`（Accessed：触れたことがある）と `D`（Dirty：書き込んだことがある）が増えていた。
+- カーネルのコードはこの 2 ビットを書いていない。CPU（ここでは QEMU）がページに触れたときに自動で立てた。OpenSBI と QEMU のソースで確かめた（次の「A と D を立てたのは誰か」）。
+- OpenSBI の起動メッセージ（2026-11-21 の `./run.sh`）に `Boot HART ISA Extensions : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu` という行があり、`svadu` が含まれている（`boot.md` に載せた抜粋には、この行は入れていない）。`svade` は含まれていない。
+
+### A と D を立てたのは誰か（OpenSBI v1.8.1、QEMU v11.1.3 のソース）
+
+2026-11-22 にソースを読んで確かめた。設定する側（OpenSBI）と立てる側（QEMU）の2段階になっている。
+
+1. OpenSBI が「自動で立ててよい」と許可する：[`lib/sbi/sbi_hart.c` L137-L174](https://github.com/riscv-software-src/opensbi/blob/v1.8.1/lib/sbi/sbi_hart.c#L137-L174)
+
+```c
+if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12) {
+    menvcfg_val = csr_read64(CSR_MENVCFG);
+    ...
+    __set_menvcfg_ext(SBI_HART_EXT_SVADU, ENVCFG_ADUE);
+    ...
+    if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SVADE))
+        menvcfg_val &= ~ENVCFG_ADUE;
+
+    csr_write64(CSR_MENVCFG, menvcfg_val);
+```
+
+- CPU に `svadu` 拡張があれば、M-mode の CSR `menvcfg` の ADUE ビットを立てる。`svade` 拡張もあれば ADUE を消す（`svade` を優先）。
+- 起動メッセージは `Boot HART Priv Version : v1.12` で、`svadu` あり、`svade` なし。なので ADUE は立った状態になる。
+
+2. QEMU が、表を引くときに `A` と `D` を立てる：[`target/riscv/tcg/cpu_helper.c`](https://github.com/qemu/qemu/blob/v11.1.3/target/riscv/tcg/cpu_helper.c)
+
+[L1123-L1125](https://github.com/qemu/qemu/blob/v11.1.3/target/riscv/tcg/cpu_helper.c#L1123-L1125)：自動で更新するかどうかを決める。
+
+```c
+bool svade = riscv_cpu_cfg(env)->ext_svade;
+bool svadu = riscv_cpu_cfg(env)->ext_svadu;
+bool adue = svadu ? env->menvcfg & MENVCFG_ADUE : !svade;
+```
+
+[L1421-L1425](https://github.com/qemu/qemu/blob/v11.1.3/target/riscv/tcg/cpu_helper.c#L1421-L1425)：最後の段の PTE を見つけたあと。
+
+```c
+if (adue) {
+    updated_pte |= PTE_A | (access_type == MMU_DATA_STORE ? PTE_D : 0);
+} else if (!(pte & PTE_A) ||
+           (access_type == MMU_DATA_STORE && !(pte & PTE_D))) {
+    return TRANSLATE_FAIL;
+}
+```
+
+- `svadu` があるので、`adue` は `menvcfg` の ADUE ビット（OpenSBI が立てた値）になる。
+- `adue` が真なら、触れたときは `A` を、書き込み（`MMU_DATA_STORE`）のときは `D` も立てる。更新した PTE は、そのあとメモリ上の表に書き戻される（L1428〜。不可分な compare-and-swap で書くとコメントにある）。
+- `adue` が偽のとき（`svade` の方式）は、`A` や `D` を立てる必要がある時点で変換に失敗し、ページフォールトになる。立てるのは OS の仕事、という方式。
+
+```
+OpenSBI (M-mode): svadu present -> menvcfg.ADUE = 1
+        |
+QEMU (page walk): adue = menvcfg.ADUE = 1
+        |
+on access: A = 1, on store: D = 1, written back to the PTE
+        |
+PTE read with xp: 0x200800cf (A and D set)
+```
+
+### 仕様での定義（Svadu、menvcfg.ADUE、A/D の管理方式）
+
+2026-11-22、特権仕様の原稿（[riscv-isa-manual](https://github.com/riscv/riscv-isa-manual) の main ブランチ。行番号は変わることがある）で確かめた。ソースで読んだ流れと一致した。
+
+1. Svadu 拡張（`src/priv/svadu.adoc`、「Svadu Extension for Hardware Updating of A/D Bits」）
+   - PTE の A/D ビットをハードウェアが更新する機能と、それを制御する CSR の欄を加える拡張。
+   - Svadu を実装していれば、`menvcfg` の ADUE の欄に書き込める。
+   - ハードウェアによる A/D の更新が無効のときは、代わりに Svade 拡張（A/D を立てる必要があるときに例外を起こす方式）が効く。
+2. `menvcfg.ADUE`（`src/priv/machine.adoc` L2194〜、「Machine Environment Configuration (`menvcfg`) Register」の節）
+   - Svadu を実装していれば、ADUE ビットが、S-mode のアドレス変換でハードウェアが A/D を更新するかどうかを決める。
+   - ADUE = 1：S-mode のアドレス変換中に、ハードウェアが A/D を更新する。Svade を実装していないかのように振る舞う。
+   - ADUE = 0：Svade を実装しているかのように振る舞う。
+   - Svadu を実装していなければ、ADUE は常に 0（読み出し専用）。
+   - ADUE を変えたあとは、`sfence.vma` で同期させる。
+   - `menvcfg` は 64 ビットの CSR。RV32 では上位 32 ビットを `menvcfgh` で扱う（L2312〜）。ADUE はビット 61（QEMU の `cpu_bits.h` で `MENVCFG_ADUE (1ULL << 61)`）なので、RV32 では `menvcfgh` の側にある。推論：OpenSBI が `csr_write64` を使っているのはこのため。
+3. A/D の2つの管理方式（`src/priv/supervisor.adoc` L1597〜、Sv32 の節の PTE の説明）
+   - 最後の段の PTE には A ビットと D ビットがある。A は「最後に A を消してから、読んだ・書いた・命令を取り出した」、D は「最後に D を消してから、書いた」ことを表す。
+   - Svade：A が 0 のページに触れたとき、または D が 0 のページに書いたとき、ページフォールトを起こす。
+   - Svade でないとき：A が 0 のページに触れたら A を、D が 0 のページに書いたら D を立てるよう、PTE を更新する。更新は、他のアクセスに対して不可分でなければならない。
+
+| 仕様 | OpenSBI / QEMU のソース |
+| --- | --- |
+| Svadu があれば ADUE に書ける | OpenSBI：`svadu` があれば `menvcfg` に ADUE を立てる |
+| ADUE = 0 なら Svade として振る舞う | QEMU：`adue = svadu ? menvcfg.ADUE : !svade` |
+| ADUE = 1 なら、触れたら A、書いたら D を立てる | QEMU：`updated_pte \|= PTE_A \| (store ? PTE_D : 0)` |
+| 更新は不可分でなければならない | QEMU：compare-and-swap で書き戻す、とコメントにある |
+- `D` が立っているので、このページに何かが書き込まれたはず。何が書き込まれたかは「次に試すこと」。
+
 ### satp から表をたどる
 
 `satp` の PPN が 1 段目の表（`table1`）の物理ページを指し、そこから先は PTE の PPN が次の行き先を指す、という同じ仕組みの繰り返し。
@@ -591,8 +709,12 @@ table1[512] = 0x20091001
                                   |
             read entry VPN[0] = 512 (0x80244000 + 512x4 = 0x80244800)
                                   |
-table0[512] = ? (not read yet)
-  PPN = ?        -> x0x1000 -> physical page holding 0x8020_0000
+table0[512] = 0x200800cf
+  PPN = 0x80200  -> x0x1000 -> 0x8020_0000  <- physical page
+                                  |
+            + page offset 0x000
+                                  |
+physical address 0x8020_0000 (= virtual address 0x8020_0000)
 ```
 
 値と呼び方の整理：
@@ -666,7 +788,9 @@ $ echo 'obase=2; ibase=16; 80080243' | bc                 # bc は 16 進を大�
 ## 次に試すこと
 
 - [x] `xp /x 0x80243000+512*4` で A の 1 段目の表の 512 番目を読み、PTE を PPN と印に分ける → `0x20091001`、2 段目の表は `0x8024_4000`（「1 段目の表の 512 番目」）
-- [ ] `xp /x 0x80244000+512*4` で 2 段目の表の 512 番目を読み、`0x8020_0000` の物理ページ番号と印を確かめる（先に予想する：恒等マッピングなら PPN は？、印は `map_page` に渡した `flags` から？）
+- [x] `xp /x 0x80244000+512*4` で 2 段目の表の 512 番目を読み、`0x8020_0000` の物理ページ番号と印を確かめる → `0x200800cf`、物理アドレスは `0x8020_0000`（恒等マッピング）。`A` と `D` も立っていた（「2 段目の表の 512 番目」）
+- [ ] `0x8020_0000` のページは `.text` の先頭なのに、なぜ `D`（書き込んだ）が 1 なのか。`llvm-nm -n kernel.elf` で、`0x8020_0000`〜`0x8020_0fff` に何が入っているかを見る
+- [x] `svadu` 拡張と `menvcfg.ADUE` の定義を、特権仕様で確かめる → ソースの流れと一致（「仕様での定義」）
 - [ ] `info mem` で、仮想アドレスと物理アドレスが同じ（恒等マッピング）か、範囲が `__kernel_base` から `__free_ram_end` までか、属性が `rwx` かを確かめる
 - [ ] `info registers` を何回か実行して、`satp` が B の表の番地に変わることを確かめる
 - [ ] 自分の `kernel.elf` で `llvm-nm kernel.elf | grep free_ram` を実行し、`__free_ram` が `0x8023_1000` か確かめる
