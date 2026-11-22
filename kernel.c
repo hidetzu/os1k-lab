@@ -33,8 +33,12 @@ void putchar(char ch) {
   sbi_call(ch, 0, 0, 0, 0, 0, 0, 1 /* Console Putchar */);
 }
 
-void user_entry(void) {
-  PANIC("not yet implemented"); // 後で実装する
+__attribute__((naked)) void user_entry(void) {
+  __asm__ __volatile__("csrw sepc, %[sepc]\n"
+                       "csrw sstatus, %[sstatus]\n"
+                       "sret\n"
+                       :
+                       : [sepc] "r"(USER_BASE), [sstatus] "r"(SSTATUS_SPIE));
 }
 
 __attribute__((naked)) void switch_context(uint32_t *prev_sp,
